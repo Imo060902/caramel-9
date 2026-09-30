@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Карамель</title>
+<style>
+:root{--c:#8a4b1f;--bg:#fbf8f3;--l:#e6dccf}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:#2b2118}
+input,select,button{font:inherit;padding:8px 10px;border:1px solid #cdbfae;border-radius:6px;background:#fff}
+button{background:var(--c);color:#fff;border:0;cursor:pointer}
+button.g{background:#fff;color:var(--c);border:1px solid var(--c)}
+button.r{background:#a33}
+.login{max-width:340px;margin:12vh auto;display:grid;gap:10px;padding:16px}
+h1{color:var(--c);margin:0}
+.app{display:flex;min-height:100vh}
+aside{width:230px;background:var(--c);color:#fff;padding:16px;flex-shrink:0}
+aside a{display:block;padding:9px 10px;border-radius:6px;color:#fff;cursor:pointer}
+aside a:hover,aside a.on{background:rgba(255,255,255,.18)}
+main{flex:1;padding:22px;overflow-x:auto}
+form.add,.row{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+table{border-collapse:collapse;width:100%;background:#fff}
+th,td{border-bottom:1px solid var(--l);padding:8px;text-align:left}
+th{background:#f3ece2}
+.err{color:#a33}.ok{color:#2a7a3b}
+.card{background:#fff;border:1px solid var(--l);border-radius:8px;padding:12px;margin:8px 0}
+.kp{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}
+.kp button{background:#fff;color:#2b2118;border:1px solid var(--l);padding:12px 16px;text-align:left}
+.kp button.on{border-color:var(--c);box-shadow:0 0 0 2px var(--c)}
+.kp b{display:block;font-size:18px}
+.tabs button{background:#fff;color:var(--c);border:1px solid var(--c)}
+.tabs button.on{background:var(--c);color:#fff}
+.mo{position:fixed;inset:0;background:rgba(0,0,0,.45);display:grid;place-items:center;z-index:9}
+.mb{background:#fff;border-radius:10px;padding:18px;width:min(380px,92vw);display:grid;gap:10px}
+select.st{color:#fff;border:0;font-weight:600}
+@media(max-width:700px){.app{flex-direction:column}aside{width:auto}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
+import { getFirestore, doc, setDoc, getDoc, onSnapshot, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
+import { getAuth, onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-auth.js";
+const firebaseConfig = {
+  apiKey: "AIzaSyBzr9mxe4TbhJAQuesIOx4hgboF7wo2MdE",
+  authDomain: "caramel-5544.firebaseapp.com",
+  projectId: "caramel-5544",
+  storageBucket: "caramel-5544.firebasestorage.app",
+  messagingSenderId: "569923380606",
+  appId: "1:569923380606:web:9cb0182b90a2d5dd0dff2f",
+  measurementId: "G-Z1V2V8NQDG"
+};
+const fbApp = initializeApp(firebaseConfig);
+const db = getFirestore(fbApp);
+const auth = getAuth(fbApp);
+window.addEventListener("error", e=>console.error(e));
+
+const ROLES={seller:'Продавец',manager:'Менеджер',admin:'Администратор',owner:'Владелец'};
+const ALL=[['obzor','Обзор'],['kassa','Касса'],['zakazy','Заказы'],['sklad','Склад'],['ceh','Цех и сборка'],['vitrina','Витрина'],['klienty','Клиенты'],['sebestoimost','Себестоимость'],['istochniki','Источники заказов'],['ceny','Редактор цен витрины'],['polzovateli','Управление пользователями']];
+const ACC={seller:['kassa','zakazy','ceh','vitrina','klienty'],manager:['zakazy','klienty','ceh','vitrina'],admin:ALL.map(a=>a[0]),owner:ALL.map(a=>a[0])};
+const isAdmin=()=>!!me&&(me.role==='admin'||me.role==='owner');
+const STAT={'Новый':'#2b6cb0','В работе':'#d97706','Готов':'#2f855a','Выдан':'#6b46c1','Отменён':'#c53030'};
+const PAY=['Наличные','Карта','QR','Смешанная'];
+const INC=['Продажа','Предоплата','Доплата по заказу','Прочий доход'];
+const EXP=['Сырьё','Коммуналка','Операционные расходы','Прочий расход'];
+const TYPES=['Торт','Десерт','Выпечка','Напиток','Другое'];
+const G={
+ klienty:[['name','Имя','text'],['phone','Телефон','text']],
+ sklad:[['name','Ингредиент','text'],['unit','Ед. изм.','text'],['stock','Остаток','number'],['price','Закупочная цена','number']],
+ sebestoimost:[['cake','Изделие','prod'],['ing','Ингредиент','ing'],['qty','Расход на 1 шт.','number'],['cost','Себестоимость','number']],
+ istochniki:[['name','Источник','text'],['pct','Комиссия, %','number']],
+ ceny:[['name','Название','text'],['type','Вид','sel',TYPES],['p_Витрина','Витрина','number'],['p_Kaspi','Kaspi','number'],['p_Яндекс','Яндекс','number']]
+};
+let mem={},ready=false;
+const get=k=>mem[k]??(mem[k]=[]);
+function put(k,v){mem[k]=v;setDoc(doc(db,'caramel',k),{v:JSON.stringify(v)}).catch(e=>console.error('Firestore: не удалось сохранить',k,e))}
+function watchKey(k){return new Promise(resolve=>{let first=true;
+ onSnapshot(doc(db,'caramel',k),snap=>{mem[k]=snap.exists()?JSON.parse(snap.data().v):(mem[k]||[]);
+  if(first){first=false;resolve()}else if(ready)app()},
+ err=>{console.error('Firestore: нет доступа к',k,err);if(first){first=false;mem[k]=mem[k]||[];resolve()}})})}
+const KEYS=['istochniki','shifts','kops','orders','bakes','show','sklad','sebestoimost','ceny','rent'];
+function watchProfiles(){return new Promise(resolve=>{let first=true;
+ onSnapshot(collection(db,'users'),snap=>{mem.profiles=snap.docs.map(d=>({uid:d.id,...d.data()}));
+  if(first){first=false;resolve()}else if(ready)app()},
+ err=>{console.error('Firestore: нет доступа к пользователям',err);if(first){first=false;mem.profiles=mem.profiles||[];resolve()}})})}
+async function boot(){
+ document.getElementById('root').innerHTML='<div class="login"><h1>Карамель</h1><div>Подключение к базе данных…</div></div>';
+ await Promise.all([...KEYS.map(watchKey),watchProfiles()]);
+ if(!get('istochniki').length)put('istochniki',[{name:'Витрина',pct:0},{name:'Kaspi',pct:10},{name:'Яндекс',pct:20},{name:'Заказной',pct:0}]);
+ ready=true;
+ onAuthStateChanged(auth,onAuth)}
+const myProfile=uid=>(get('profiles')||[]).find(p=>p.uid===uid);
+async function fetchProfile(user){
+ const uid=user.uid;
+ let p=myProfile(uid);if(p){console.log('Профиль users/'+uid+' найден в кэше:',p);return p}
+ for(let i=0;i<5;i++){
+  try{
+   const snap=await getDoc(doc(db,'users',uid));
+   if(snap.exists()){p={uid,...snap.data()};console.log('Профиль users/'+uid+' загружен:',p);return p}
+   break; // документа точно нет — не нужно повторять
+  }catch(err){
+   console.error('Firestore: попытка '+(i+1)+' чтения users/'+uid+' не удалась:',err.code||err.message||err);
+   await new Promise(r=>setTimeout(r,350));
+  }
+ }
+ // документа нет — создаём с дефолтными полями
+ try{
+  const fresh={email:user.email,role:'owner',name:user.displayName||'Владелец',createdAt:new Date()};
+  await setDoc(doc(db,'users',uid),fresh);
+  console.log('Профиль users/'+uid+' отсутствовал, создан автоматически:',fresh);
+  return{uid,...fresh};
+ }catch(err){
+  console.error('Firestore: не удалось создать users/'+uid+':',err.code||err.message||err);
+  return null;
+ }
+}
+async function onAuth(user){
+ if(!user){me=null;msg=msg||'';return loginView(false)}
+ const p=await fetchProfile(user);
+ if(!p){msg='Не удалось загрузить профиль. Попробуйте войти ещё раз.';console.error('onAuth: профиль недоступен для',user.uid);return signOut(auth)}
+ const approved=p.status?p.status==='ok':!!p.role; // старые записи без поля status считаем одобренными, если у них есть роль
+ if(!approved){msg=p.status==='wait'?'Аккаунт ожидает подтверждения администратором':'Доступ отключён администратором';return signOut(auth)}
+ const role=ACC[p.role]?p.role:'seller'; // неизвестная роль -> минимальный доступ, чтобы не падать
+ const name=p.name||(user.email||'').split('@')[0]||'Пользователь';
+ me={uid:user.uid,email:user.email,name,role,owner:role==='owner'||!!p.owner};msg='';
+ console.log('Вход выполнен:',me);
+ sec=(ACC[me.role]||[]).includes(sec)?sec:ACC[me.role][0];app()}
+function mapAuthError(code){const m={'auth/invalid-email':'Неверный формат email','auth/invalid-credential':'Неверный email или пароль','auth/wrong-password':'Неверный email или пароль','auth/user-not-found':'Неверный email или пароль','auth/too-many-requests':'Слишком много попыток. Попробуйте позже','auth/email-already-in-use':'Такой email уже зарегистрирован','auth/weak-password':'Пароль должен быть не короче 6 символов'};return m[code]||('Ошибка: '+code)}
+async function doLogin(email,pass){try{await signInWithEmailAndPassword(auth,email,pass)}catch(err){msg=mapAuthError(err.code);loginView(false)}}
+async function doRegister(name,email,pass){try{
+ const cred=await createUserWithEmailAndPassword(auth,email,pass),u=cred.user.uid;
+ const qs=await getDocs(query(collection(db,'users'),where('role','in',['admin','owner'])));
+ const owner=qs.empty;
+ await setDoc(doc(db,'users',u),{name,email,role:owner?'admin':'',status:owner?'ok':'wait',owner});
+ if(!owner){await signOut(auth);msg='Заявка отправлена. Ожидайте подтверждения администратором.';loginView(false)}
+}catch(err){msg=mapAuthError(err.code);loginView(true)}}
+let me=null,sec='',msg='',cs='bake',kd='',zc='Витрина',ob={mode:'d',d:'',m:'',card:'inc'};
+function go(s){sec=s;app()}
+function logout(){signOut(auth)}
+function toReg(r){msg='';loginView(r)}
+function setKd(v){kd=v;app()}
+function setCs(v){cs=v;app()}
+function setZc(v){zc=v;const el=$('#it');if(el)el.innerHTML=itemOpts(v)}
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt=n=>Number(n||0).toLocaleString('ru-RU')+' ₸';
+const day=()=>new Date().toLocaleDateString('en-CA');
+const now=()=>new Date().toLocaleString('ru-RU');
+const uid=()=>Date.now()+Math.floor(Math.random()*1e4);
+const sum=a=>a.reduce((x,y)=>x+y,0);
+
+function modal(html,ok,btn){const d=document.createElement('div');d.className='mo';
+ d.innerHTML=`<div class="mb">${html}<div class="row"><button class="g" id="mx">Отмена</button><button id="mk">${btn||'Готово'}</button></div></div>`;
+ document.body.appendChild(d);d.querySelector('#mx').onclick=()=>d.remove();
+ d.querySelector('#mk').onclick=()=>{if(ok(d)!==false)d.remove()}}
+const ask=(cb)=>modal('<b>Вы уверены?</b><span>Запись будет удалена.</span>',()=>{cb()},'Да, удалить');
+
+function loginView(reg){
+ $('#root').innerHTML=`<form class="login"><h1>Карамель</h1><div>${reg?'Заявка на регистрацию':'Вход в систему'}</div>
+ ${reg?'<input id="n" placeholder="Имя" required>':''}
+ <input id="l" type="email" placeholder="Email" required>
+ <input id="p" type="password" placeholder="Пароль" required minlength="6">
+ <button type="submit">${reg?'Отправить заявку':'Войти'}</button><div class="err" id="m">${esc(msg)}</div>
+ <a href="#" onclick="toReg(${!reg});return false">${reg?'Уже есть аккаунт? Войти':'Нет аккаунта? Подать заявку'}</a></form>`;
+ $('.login').onsubmit=e=>{e.preventDefault();const email=$('#l').value.trim(),pass=$('#p').value;
+  if(reg){const name=$('#n').value.trim();if(!name){msg='Введите имя';return loginView(true)}
+   $('#m').textContent='Отправляем заявку…';return doRegister(name,email,pass)}
+  $('#m').textContent='Входим…';doLogin(email,pass)};
+}
+function app(){
+ if(!me)return;
+ const nav=ALL.filter(a=>ACC[me.role].includes(a[0]));
+ $('#root').innerHTML=`<div class="app"><aside><h1 style="color:#fff">Карамель</h1><div style="margin:12px 0">${nav.map(a=>`<a class="${a[0]===sec?'on':''}" onclick="go('${a[0]}')">${a[1]}</a>`).join('')}</div>
+ <div style="opacity:.85;font-size:13px">${esc(me.name)}<br>${ROLES[me.role]}</div><p><a onclick="logout()">Выйти</a></p></aside><main id="v"></main></div>`;
+ if(!ACC[me.role].includes(sec))return;
+ const V={obzor,kassa,zakazy,ceh,vitrina,polzovateli:users};
+ $('#v').innerHTML=`<h2>${ALL.find(a=>a[0]===sec)[1]}</h2>`+(V[sec]?V[sec]():crud(sec));
+}
+/* ---------- номенклатура ---------- */
+const prodSel=(id,v)=>`<select id="${id}" name="${id}">${get('ceny').map(x=>`<option ${x.name===v?'selected':''}>${esc(x.name)}</option>`).join('')||'<option value="">Нет изделий — нажмите «Добавить вариант»</option>'}</select><button type="button" class="g" onclick="addVariant()">Добавить вариант</button>`;
+function addVariant(){modal(`<b>Новый вариант</b><input id="vn" placeholder="Название (торт, десерт, выпечка, напиток…)"><select id="vt">${TYPES.map(t=>`<option>${t}</option>`).join('')}</select><input id="vp" type="number" placeholder="Цена на витрине">`,d=>{
+ const n=d.querySelector('#vn').value.trim();if(!n)return false;
+ const c=get('ceny');if(!c.find(x=>x.name===n))c.push({name:n,type:d.querySelector('#vt').value,'p_Витрина':Number(d.querySelector('#vp').value)||0,'p_Kaspi':0,'p_Яндекс':0});put('ceny',c);app()})}
+/* ---------- универсальный список ---------- */
+function crud(k){
+ const f=G[k];
+ const inp=([key,lab,t,o])=>t==='sel'?`<select name="${key}">${o.map(v=>`<option>${v}</option>`).join('')}</select>`
+  :t==='prod'?prodSel(key):t==='ing'?`<select name="${key}">${get('sklad').map(x=>`<option>${esc(x.name)}</option>`).join('')}</select>`
+  :`<input name="${key}" type="${t}" placeholder="${lab}" ${t==='number'?'step="any"':''}>`;
+ return`<form class="add" onsubmit="addG(event,'${k}')">${f.map(inp).join('')}<button>Добавить</button></form><div class="err" id="e"></div>
+ <div style="overflow-x:auto"><table><tr>${f.map(x=>`<th>${x[1]}</th>`).join('')}<th></th></tr>${get(k).map((r,i)=>`<tr>${f.map(x=>`<td>${esc(r[x[0]])}</td>`).join('')}<td>${isAdmin()?`<button class="r" onclick="ask(()=>delG('${k}',${i}))">Удалить</button>`:''}</td></tr>`).join('')||'<tr><td colspan="9">Пока пусто.</td></tr>'}</table></div>`}
+function addG(e,k){e.preventDefault();const r={};
+ for(const[a,b]of new FormData(e.target).entries())r[a]=G[k].find(x=>x[0]===a)[2]==='number'?Number(b)||0:b;
+ if(!r[G[k][0][0]])return $('#e').textContent='Заполните первое поле';
+ const a=get(k);a.push(r);put(k,a);app()}
+function delG(k,i){const a=get(k);a.splice(i,1);put(k,a);app()}
+/* ---------- касса ---------- */
+const myShift=()=>get('shifts').find(s=>s.who===me.uid&&!s.closed);
+const shExp=s=>s.open+sum(get('kops').filter(o=>o.sh===s.id).map(o=>o.sum));
+function opsTable(list,canDel){return`<table><tr><th>Время</th><th>Кто</th><th>Категория</th><th>Сумма</th><th>Комментарий</th><th></th></tr>${list.map(o=>`<tr><td>${esc(o.ts)}</td><td>${esc(o.who)}</td><td>${esc(o.kind)}</td><td>${fmt(o.sum)}</td><td>${esc(o.note)}</td><td>${canDel&&o.kind!=='Инкассация'?`<button class="r" onclick="ask(()=>delOp(${o.id}))">Удалить</button>`:''}</td></tr>`).join('')||'<tr><td colspan="6">Записей нет.</td></tr>'}</table>`}
+function kassa(){
+ if(isAdmin())return kassaAdmin();
+ const s=myShift();
+ if(!s)return`<div class="card"><b>Смена не открыта.</b> Укажите наличные в кассе на начало (размен).<form class="add" onsubmit="openShift(event)"><input name="o" type="number" step="any" placeholder="Начальная сумма" required><button>Открыть смену</button></form></div>`;
+ const ops=get('kops').filter(o=>o.sh===s.id).reverse();
+ return`<div class="card">Смена открыта: ${esc(s.ts)} · Размен: <b>${fmt(s.open)}</b> · Сейчас в кассе: <b>${fmt(shExp(s))}</b></div>
+ <form class="add" onsubmit="addOp(event)"><select name="kind">${INC.map(k=>`<option>${k}</option>`).join('')}${EXP.map(k=>`<option>${k}</option>`).join('')}</select><input name="sum" type="number" step="any" min="0" placeholder="Сумма" required><input name="note" placeholder="Комментарий"><button>Записать</button></form>
+ ${opsTable(ops,true)}
+ <form class="add" onsubmit="closeShift(event)"><input name="a" type="number" step="any" placeholder="Фактическая сумма в кассе" required><button class="r">Закрыть смену</button></form>`}
+function openShift(e){e.preventDefault();const s=get('shifts');s.push({id:uid(),who:me.uid,name:me.name,day:day(),open:Number(e.target.o.value)||0,ts:now(),closed:false});put('shifts',s);app()}
+function closeShift(e){e.preventDefault();const a=get('shifts'),s=a.find(x=>x.id===myShift().id);s.actual=Number(e.target.a.value)||0;s.exp=shExp(s);s.closed=true;s.cts=now();put('shifts',a);
+ alert('Смена закрыта. Ожидалось: '+fmt(s.exp)+', по факту: '+fmt(s.actual)+', разница: '+fmt(s.actual-s.exp));app()}
+function postOp(kind,v,note,sh){const o=get('kops');o.push({id:uid(),sh:sh??(myShift()||{}).id??null,who:me.name,day:day(),ts:now(),kind,sum:v,note});put('kops',o)}
+function addOp(e){e.preventDefault();const f=e.target,v=Number(f.sum.value)||0;postOp(f.kind.value,INC.includes(f.kind.value)?v:-v,f.note.value);app()}
+function delOp(id){put('kops',get('kops').filter(o=>o.id!==id));app()}
+function kassaAdmin(){
+ kd=kd||day();const sh=get('shifts').filter(s=>s.day===kd),open=get('shifts').filter(s=>!s.closed);
+ return`<div class="card"><b>Инкассация</b> ${open.length?'(попадёт в открытую смену: '+esc(open[open.length-1].name)+')':'— нет открытой смены'}
+ <form class="add" onsubmit="collect(event)"><input name="a" type="number" min="1" step="any" placeholder="Сумма инкассации" required><input name="n" placeholder="Комментарий"><button ${open.length?'':'disabled'}>Провести инкассацию</button></form></div>
+ <div class="row">День: <input type="date" value="${kd}" onchange="setKd(this.value)"></div>
+ ${sh.map(s=>`<div class="card"><b>${esc(s.name)}</b> · открыта ${esc(s.ts)}${s.closed?' · закрыта '+esc(s.cts):' · <span class="ok">идёт сейчас</span>'}<br>Размен: ${fmt(s.open)} · Ожидается: ${fmt(shExp(s))}${s.closed?' · Факт: '+fmt(s.actual)+' · Разница: '+fmt(s.actual-s.exp):''}
+ ${opsTable(get('kops').filter(o=>o.sh===s.id),true)}</div>`).join('')||'<p>В этот день смен не было.</p>'}`}
+function collect(e){e.preventDefault();const o=get('shifts').filter(s=>!s.closed);if(!o.length)return;postOp('Инкассация',-(Number(e.target.a.value)||0),e.target.n.value,o[o.length-1].id);app()}
+/* ---------- витрина ---------- */
+function addShow(name,g,price,qty){const a=get('show'),x=a.find(y=>y.name===name&&y.g===g&&y.price===price);x?x.qty+=qty:a.push({id:uid(),name,g,price,qty});put('show',a)}
+function vitrina(){return`<form class="add" onsubmit="addV(event)">${prodSel('name')}<input name="g" type="number" min="1" step="1" placeholder="Вес, г" required><input name="price" type="number" step="any" placeholder="Цена" required><input name="qty" type="number" min="1" placeholder="Кол-во" required><button>Добавить</button></form>
+ <table><tr><th>Наименование</th><th>Вес, г</th><th>Цена</th><th>Количество</th><th></th></tr>${get('show').map(x=>`<tr><td>${esc(x.name)}</td><td>${x.g}</td><td>${fmt(x.price)}</td><td>${x.qty}</td><td><button class="r" onclick="ask(()=>delV(${x.id}))">Удалить</button></td></tr>`).join('')||'<tr><td colspan="5">На витрине пусто.</td></tr>'}</table>`}
+function addV(e){e.preventDefault();const f=e.target;if(!f.name.value)return;addShow(f.name.value,Math.round(Number(f.g.value)),Number(f.price.value),Number(f.qty.value));app()}
+function delV(id){put('show',get('show').filter(x=>x.id!==id));app()}
+/* ---------- цех и сборка ---------- */
+function ceh(){
+ const b=get('bakes'),free=b.filter(x=>!x.taken);
+ const tabs=`<div class="row tabs"><button class="${cs==='bake'?'on':''}" onclick="setCs('bake')">Пекари</button><button class="${cs==='asm'?'on':''}" onclick="setCs('asm')">Сборка</button></div>`;
+ if(cs==='bake')return tabs+`<form class="add" onsubmit="addBake(event)">${prodSel('cake')}<input name="recipe" placeholder="Рецепт"><input name="g" type="number" min="1" step="1" placeholder="Вес, г" required><input name="r" type="number" step="any" placeholder="Радиус, см"><input name="h" type="number" step="any" placeholder="Высота, см"><button>Записать выпечку</button></form>
+ <div class="err" id="e"></div><table><tr><th>Изделие</th><th>Рецепт</th><th>Вес, г</th><th>Радиус</th><th>Высота</th><th>Пекарь</th><th></th></tr>${free.map(x=>`<tr><td>${esc(x.cake)}</td><td>${esc(x.recipe)}</td><td>${x.g}</td><td>${esc(x.r)}</td><td>${esc(x.h)}</td><td>${esc(x.who)}</td><td><button class="r" onclick="ask(()=>delBake(${x.id}))">Удалить</button></td></tr>`).join('')||'<tr><td colspan="7">Испечённого нет.</td></tr>'}</table>`;
+ return tabs+`<h3>Доступно для сборки</h3><table><tr><th>Изделие</th><th>Вес, г</th><th>Радиус</th><th>Высота</th><th></th></tr>${free.map(x=>`<tr><td>${esc(x.cake)}</td><td>${x.g}</td><td>${esc(x.r)}</td><td>${esc(x.h)}</td><td><button onclick="take(${x.id})">Забрать на сборку</button></td></tr>`).join('')||'<tr><td colspan="5">Нет выпечки. Пекари должны записать её на вкладке «Пекари».</td></tr>'}</table>
+ <h3>Собрано</h3><table><tr><th>Изделие</th><th>Вес, г</th><th>Назначение</th><th>Сборщик</th></tr>${b.filter(x=>x.taken).map(x=>`<tr><td>${esc(x.cake)}</td><td>${x.g}</td><td>${esc(x.dest)}</td><td>${esc(x.by)}</td></tr>`).join('')||'<tr><td colspan="4">Пока ничего.</td></tr>'}</table>`}
+function addBake(e){e.preventDefault();const f=e.target;if(!f.cake.value)return $('#e').textContent='Сначала добавьте изделие: кнопка «Добавить вариант»';
+ const c=f.cake.value,b=get('bakes');b.push({id:uid(),cake:c,recipe:f.recipe.value,g:Math.round(Number(f.g.value)),r:f.r.value,h:f.h.value,who:me.name,taken:false});put('bakes',b);
+ const sk=get('sklad');get('sebestoimost').filter(x=>x.cake===c&&x.qty).forEach(x=>{const i=sk.find(y=>y.name===x.ing);if(i)i.stock=Math.round((i.stock-x.qty)*1000)/1000}); // автосписание сырья
+ put('sklad',sk);app()}
+function delBake(id){put('bakes',get('bakes').filter(x=>x.id!==id));app()}
+function take(id){const ord=get('orders').filter(o=>!['Выдан','Отменён'].includes(o.st));
+ modal(`<b>Куда отправить</b><select id="d"><option value="v">Витрина</option>${ord.map(o=>`<option value="${o.id}">Заказ №${String(o.id).slice(-5)} · ${esc(o.name)}</option>`).join('')}</select><input id="p" type="number" step="any" placeholder="Цена на витрине (если Витрина)">`,d=>{
+ const a=get('bakes'),x=a.find(y=>y.id===id),v=d.querySelector('#d').value;
+ if(v==='v'){const p=Number(d.querySelector('#p').value);if(!p)return false;addShow(x.cake,x.g,p,1);x.dest='Витрина'}else x.dest='Заказ №'+v.slice(-5);
+ x.taken=true;x.by=me.name;put('bakes',a);app()},'Забрать')}
+/* ---------- заказы ---------- */
+const cakeP=(name,src)=>{const c=get('ceny').find(x=>x.name===name)||{};return Number(c['p_'+src])||Number(c['p_Витрина'])||0};
+function itemOpts(src){return src==='Витрина'?get('show').filter(x=>x.qty>0).map(x=>`<option value="${x.id}">${esc(x.name)} (${x.g} г) — ${fmt(x.price)}, в наличии ${x.qty}</option>`).join('')||'<option value="">На витрине ничего нет</option>'
+ :get('ceny').map(x=>`<option value="${esc(x.name)}">${esc(x.name)} — ${fmt(cakeP(x.name,src))}</option>`).join('')||'<option value="">Нет изделий</option>'}
+function zakazy(){
+ const src=get('istochniki').map(x=>x.name);if(!src.includes(zc))zc=src[0];
+ return`<form class="add" onsubmit="addZ(event)"><input name="name" placeholder="Клиент" required><input name="phone" placeholder="Телефон">
+ <select name="src" onchange="setZc(this.value)">${src.map(s=>`<option ${s===zc?'selected':''}>${esc(s)}</option>`).join('')}</select>
+ <select name="item" id="it">${itemOpts(zc)}</select><button type="button" class="g" onclick="addVariant()">Добавить вариант</button>
+ <select name="pay">${PAY.map(p=>`<option>${p}</option>`).join('')}</select><input name="g" type="number" step="1" placeholder="Вес, г"><input name="r" type="number" step="any" placeholder="Радиус, см"><input name="h" type="number" step="any" placeholder="Высота, см">
+ <input name="pre" type="number" step="any" placeholder="Предоплата"><input name="addr" placeholder="Адрес"><button>Оформить</button></form><div class="err" id="e"></div>
+ <div style="overflow-x:auto"><table><tr><th>№</th><th>Клиент</th><th>Канал</th><th>Изделие</th><th>Итого</th><th>Оплата</th><th>Статус</th><th></th></tr>${get('orders').slice().reverse().map(o=>`<tr><td>${String(o.id).slice(-5)}</td><td>${esc(o.name)}<br><small>${esc(o.phone)} ${esc(o.addr)}</small></td><td>${esc(o.src)}</td><td>${esc(o.item)}${o.g?' · '+o.g+' г':''}</td><td>${fmt(o.total)}${o.pre?'<br><small>предоплата '+fmt(o.pre)+'</small>':''}</td><td>${esc(o.pay)}</td>
+ <td><select class="st" style="background:${STAT[o.st]}" onchange="setSt(${o.id},this.value)">${Object.keys(STAT).map(s=>`<option ${s===o.st?'selected':''}>${s}</option>`).join('')}</select></td>
+ <td>${isAdmin()?`<button class="r" onclick="ask(()=>delZ(${o.id}))">Удалить</button>`:''}</td></tr>`).join('')||'<tr><td colspan="8">Заказов нет.</td></tr>'}</table></div>`}
+function addZ(e){e.preventDefault();const f=e.target,src=f.src.value;let item=f.item.value,price=0;
+ if(!item)return $('#e').textContent='Выберите изделие';
+ if(src==='Витрина'){const s=get('show'),x=s.find(y=>String(y.id)===item);if(!x||x.qty<1)return $('#e').textContent='Товара нет в наличии';x.qty--;if(x.qty<1)s.splice(s.indexOf(x),1);put('show',s);item=x.name;price=x.price}else price=cakeP(item,src);
+ const pre=Number(f.pre.value)||0,o=get('orders');o.push({id:uid(),name:f.name.value,phone:f.phone.value,src,item,total:price,pay:f.pay.value,pre,g:f.g.value,r:f.r.value,h:f.h.value,addr:f.addr.value,st:'Новый',who:me.name});put('orders',o);
+ if(pre)postOp('Предоплата',pre,'Заказ: '+f.name.value);app()}
+function setSt(id,v){const a=get('orders'),o=a.find(x=>x.id===id);o.st=v;
+ if(v==='Выдан'&&!o.paid){o.paid=1;const d=o.total-o.pre;if(d>0)postOp('Доплата по заказу',d,'Заказ: '+o.name)}put('orders',a);app()}
+function delZ(id){put('orders',get('orders').filter(o=>o.id!==id));app()}
+/* ---------- пользователи ---------- */
+function users(){return`<table><tr><th>Имя</th><th>Email</th><th>Роль</th><th>Статус</th><th></th></tr>${get('profiles').map(u=>`<tr><td>${esc(u.name)}</td><td>${esc(u.email)}</td>
+ <td>${u.status==='ok'?(ROLES[u.role]||u.role):`<select id="ro_${u.uid}">${Object.entries(ROLES).filter(([k])=>k!=='owner').map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>`}</td>
+ <td>${u.status==='ok'?'<span class="ok">Активен</span>':'Ожидает подтверждения'}</td>
+ <td>${u.status==='ok'?(u.owner?'':`<button class="r" onclick="ask(()=>ban('${u.uid}'))">Отключить</button>`):`<button onclick="okU('${u.uid}')">Одобрить</button>`}</td></tr>`).join('')||'<tr><td colspan="5">Пока никто не зарегистрирован.</td></tr>'}</table>`}
+function okU(u){const sel=$('#ro_'+u);const role=sel?sel.value:'seller';setDoc(doc(db,'users',u),{role,status:'ok'},{merge:true}).catch(e=>console.error(e))}
+function ban(u){setDoc(doc(db,'users',u),{role:'',status:'wait'},{merge:true}).catch(e=>console.error(e))}
+/* ---------- обзор ---------- */
+const rentAll=()=>{const r=get('rent');return Array.isArray(r)?{}:r};
+function obzor(){
+ ob.d=ob.d||day();ob.m=ob.m||day().slice(0,7);const D=ob.mode==='d',key=D?ob.d:ob.m;
+ const ops=get('kops').filter(o=>o.kind!=='Инкассация'&&(D?o.day===ob.d:o.day.startsWith(ob.m)));
+ const inc=ops.filter(o=>o.sum>0),exp=ops.filter(o=>o.sum<0),rent=Number(rentAll()[key])||0;
+ const I=sum(inc.map(o=>o.sum)),E=-sum(exp.map(o=>o.sum)),T=I-E-rent,p=D?'день':'месяц';
+ const K=(id,t,v)=>`<button class="${ob.card===id?'on':''}" onclick="ob.card='${id}';app()">${t}<b>${fmt(v)}</b></button>`;
+ const list=a=>{const g={};a.forEach(o=>{g[o.kind]=g[o.kind]||{n:0,s:0};g[o.kind].n++;g[o.kind].s+=Math.abs(o.sum)});return`<table><tr><th>Категория</th><th>Записей</th><th>Сумма</th></tr>${Object.entries(g).map(([k,v])=>`<tr><td>${esc(k)}</td><td>${v.n}</td><td>${fmt(v.s)}</td></tr>`).join('')||'<tr><td colspan="3">Нет данных.</td></tr>'}</table>`+opsTable(a,false)};
+ return`<div class="row"><select onchange="ob.mode=this.value;app()"><option value="d" ${D?'selected':''}>День</option><option value="m" ${D?'':'selected'}>Месяц</option></select>
+ ${D?`<input type="date" value="${ob.d}" onchange="ob.d=this.value||ob.d;app()">`:`<input type="month" value="${ob.m}" onchange="ob.m=this.value||ob.m;app()">`}</div>
+ <div class="kp">${K('inc','Доход за '+p,I)}${K('exp','Расход за '+p,E)}${K('rent','Аренда и ком. услуги',rent)}${K('tot','Итог',T)}</div>
+ ${ob.card==='inc'?list(inc):ob.card==='exp'?list(exp):ob.card==='rent'?`<div class="card">Аренда и коммунальные услуги за выбранный период<form class="add" onsubmit="saveRent(event,'${key}')"><input name="r" type="number" step="any" value="${rent}"><button>Сохранить</button></form></div>`
+ :`<div class="card">Доход ${fmt(I)} − Расход ${fmt(E)} − Аренда и ком. услуги ${fmt(rent)} = <b>${fmt(T)}</b></div>`}`}
+function saveRent(e,k){e.preventDefault();const r=rentAll();r[k]=Number(e.target.r.value)||0;put('rent',r);app()}
+boot();
+window.addBake=addBake;window.addG=addG;window.addOp=addOp;window.addV=addV;window.addVariant=addVariant;
+window.addZ=addZ;window.app=app;window.ask=ask;window.ban=ban;window.closeShift=closeShift;window.collect=collect;
+window.delBake=delBake;window.delG=delG;window.delOp=delOp;window.delV=delV;window.delZ=delZ;window.itemOpts=itemOpts;
+window.loginView=loginView;window.okU=okU;window.openShift=openShift;window.saveRent=saveRent;window.setSt=setSt;window.take=take;
+window.ob=ob;window.go=go;window.logout=logout;window.toReg=toReg;window.setKd=setKd;window.setCs=setCs;window.setZc=setZc;
+</script>
+</body>
+</html>
